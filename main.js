@@ -1978,7 +1978,7 @@ async function autoLoadData(forceFetch = false) {
   preloadClassStudents();
 }
 
-function preloadJournalDetails() {
+async function preloadJournalDetails() {
   const journalRows = parsedItems.flatMap(({ subject, classes }) =>
     classes.map(c => ({ journalId: c.journalId, subgroupId: c.subgroupId }))
   );
@@ -2006,36 +2006,37 @@ function preloadJournalDetails() {
       el.textContent = `Завантажено всі журнали (${total})`;
     });
   };
-  let idx = 0;
-  const loadNext = async () => {
-    while (idx < toLoad.length) {
-      const j = toLoad[idx++];
-      const { login, password } = getNzCreds();
-      if (!login || !password) return;
-      try {
-        const r = await fetch(`${API}/parse/journal`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ journalId: j.journalId, subgroupId: j.subgroupId || undefined, login, password })
-        });
-        const data = await r.json().catch(() => ({}));
-        if (!data.error) {
-          setJournalDetailsCache(j.journalId, j.subgroupId, { teacher: data.teacher, students: data.students || [] });
-          loaded++;
-          updatePreload();
-          updateStats();
-          renderJournalTeachersTable();
-        }
-      } catch (_) {}
+  const { login, password } = getNzCreds();
+  if (!login || !password) return;
+  const CONCURRENCY = 4;
+  const loadChunk = async (chunk) => {
+    const results = await Promise.allSettled(chunk.map(j =>
+      fetch(`${API}/parse/journal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ journalId: j.journalId, subgroupId: j.subgroupId || undefined, login, password })
+      }).then(r => r.json().catch(() => ({}))).then(data => ({ j, data }))
+    ));
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      const j = chunk[i];
       journalLoading.delete(`${j.journalId}-${j.subgroupId || ''}`);
-      await new Promise(r => setTimeout(r, 500));
+      if (r.status === 'fulfilled' && r.value?.data && !r.value.data.error) {
+        setJournalDetailsCache(j.journalId, j.subgroupId, { teacher: r.value.data.teacher, students: r.value.data.students || [] });
+        loaded++;
+      }
     }
-    finishPreload();
+    updatePreload();
     updateStats();
     renderJournalTeachersTable();
   };
   updatePreload();
-  loadNext();
+  for (let i = 0; i < toLoad.length; i += CONCURRENCY) {
+    await loadChunk(toLoad.slice(i, i + CONCURRENCY));
+  }
+  finishPreload();
+  updateStats();
+  renderJournalTeachersTable();
 }
 
 function preloadClassStudents() {
@@ -2272,23 +2273,26 @@ async function handleParse() {
       progressText.textContent = `Крок 2/2: Деталі журналів ${loaded} / ${total}`;
       status.textContent = `Завантажено деталей: ${loaded} з ${total} журналів`;
     };
-    for (const j of journalRows) {
-      try {
-        const resp = await fetch(`${API}/parse/journal`, {
+    const CONCURRENCY = 4;
+    for (let i = 0; i < journalRows.length; i += CONCURRENCY) {
+      const chunk = journalRows.slice(i, i + CONCURRENCY);
+      const results = await Promise.allSettled(chunk.map(j =>
+        fetch(`${API}/parse/journal`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ journalId: j.journalId, subgroupId: j.subgroupId || undefined, login, password })
-        });
-        const jData = await resp.json().catch(() => ({}));
-        if (!jData.error) {
+        }).then(r => r.json().catch(() => ({}))).then(jData => ({ j, jData }))
+      ));
+      for (const r of results) {
+        if (r.status === 'fulfilled' && r.value?.jData && !r.value.jData.error) {
+          const { j, jData } = r.value;
           setJournalDetailsCache(j.journalId, j.subgroupId, { teacher: jData.teacher, students: jData.students || [] });
         }
-      } catch (_) {}
-      loaded++;
+        loaded++;
+      }
       updateProgress();
       updateStats();
       renderJournalTeachersTable();
-      await new Promise(r => setTimeout(r, 300));
     }
     progressBar.style.width = '100%';
     progressText.textContent = `Готово: ${total} журналів`;
