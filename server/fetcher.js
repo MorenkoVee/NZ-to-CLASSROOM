@@ -20,6 +20,35 @@ function getChromePath() {
 const cookieCache = new Map();
 const CACHE_TTL = 30 * 60 * 1000;
 
+let sharedBrowser = null;
+let browserIdleAt = 0;
+const BROWSER_IDLE_TIMEOUT = 5 * 60 * 1000;
+
+async function getBrowser() {
+  if (sharedBrowser && sharedBrowser.connected) {
+    browserIdleAt = Date.now();
+    return sharedBrowser;
+  }
+  sharedBrowser = null;
+  const execPath = getChromePath();
+  const launchOpts = {
+    headless: process.env.HEADLESS !== 'false' ? 'new' : false,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--disable-blink-features=AutomationControlled']
+  };
+  if (execPath) launchOpts.executablePath = execPath;
+  sharedBrowser = await puppeteer.launch(launchOpts);
+  sharedBrowser.on('disconnected', () => { sharedBrowser = null; });
+  browserIdleAt = Date.now();
+  return sharedBrowser;
+}
+
+async function closeIdleBrowser() {
+  if (sharedBrowser && sharedBrowser.connected && Date.now() - browserIdleAt > BROWSER_IDLE_TIMEOUT) {
+    try { await sharedBrowser.close(); } catch (_) {}
+    sharedBrowser = null;
+  }
+}
+
 async function loginToNz(page, login, password, fromRedirect = false) {
   if (!fromRedirect) {
     await page.goto('https://nz.ua/', { waitUntil: 'load', timeout: 20000 });
@@ -89,16 +118,9 @@ async function loginToNz(page, login, password, fromRedirect = false) {
 
 export async function fetchWithPuppeteer(url, options = {}) {
   const { login, password } = options;
-  let browser;
-  const execPath = getChromePath();
-  const launchOpts = {
-    headless: process.env.HEADLESS !== 'false' ? 'new' : false,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--disable-blink-features=AutomationControlled']
-  };
-  if (execPath) launchOpts.executablePath = execPath;
+  const browser = await getBrowser();
+  const page = await browser.newPage();
   try {
-    browser = await puppeteer.launch(launchOpts);
-    const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
     if (login && password) {
       const cacheKey = login;
@@ -117,6 +139,7 @@ export async function fetchWithPuppeteer(url, options = {}) {
     const html = await page.content();
     return html;
   } finally {
-    if (browser) await browser.close();
+    try { await page.close(); } catch (_) {}
+    setImmediate(closeIdleBrowser);
   }
 }
