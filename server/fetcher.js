@@ -22,8 +22,8 @@ const CACHE_TTL = 30 * 60 * 1000;
 
 async function loginToNz(page, login, password, fromRedirect = false) {
   if (!fromRedirect) {
-    await page.goto('https://nz.ua/', { waitUntil: 'networkidle2', timeout: 30000 });
-    await new Promise(r => setTimeout(r, 3000));
+    await page.goto('https://nz.ua/', { waitUntil: 'load', timeout: 20000 });
+    await new Promise(r => setTimeout(r, 1500));
   }
   const loginSelectors = [
     'input[name="login"]',
@@ -66,7 +66,7 @@ async function loginToNz(page, login, password, fromRedirect = false) {
       });
       if (href) {
         await page.goto(href, { waitUntil: 'networkidle2', timeout: 15000 });
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 1500));
         return loginToNz(page, login, password, true);
       }
     }
@@ -85,7 +85,7 @@ async function loginToNz(page, login, password, fromRedirect = false) {
       }
     })
   ]);
-  await new Promise(r => setTimeout(r, 3000));
+  await new Promise(r => setTimeout(r, 1500));
   const cookies = await page.cookies();
   return cookies;
 }
@@ -115,9 +115,9 @@ export async function fetchWithPuppeteer(url, options = {}) {
         cookieCache.set(cacheKey, { cookies, ts: Date.now() });
       }
     }
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-    await page.waitForSelector('table.journal-choose, table', { timeout: 10000 }).catch(() => {});
-    await new Promise(r => setTimeout(r, 3000));
+    await page.goto(url, { waitUntil: 'load', timeout: 25000 });
+    await page.waitForSelector('table.journal-choose, table', { timeout: 8000 }).catch(() => {});
+    await new Promise(r => setTimeout(r, 1500));
     const html = await page.content();
     return html;
   } finally {
