@@ -96,7 +96,7 @@ export async function fetchWithPuppeteer(url, options = {}) {
   const execPath = getChromePath();
   const launchOpts = {
     headless: process.env.HEADLESS !== 'false' ? 'new' : false,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled']
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--disable-blink-features=AutomationControlled']
   };
   if (execPath) launchOpts.executablePath = execPath;
   try {

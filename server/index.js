@@ -1,11 +1,14 @@
 import 'dotenv/config';
 import express from 'express';
 import { writeFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import cors from 'cors';
 import { fetchWithPuppeteer } from './fetcher.js';
 import { parseJournalList, parseJournalPage, parseJournalDetails } from './parser.js';
 import { getClassroomClient, createCourse, addTeacher, addStudentToCourse, removeStudentFromCourse, removeTeacherFromCourse, archiveCourse, getAuthUrl, getTokensFromCode, getTeachersFromAdmin, getClassesFromAdmin, getUsersFromOrgUnit, getUserInfo, moveUserToOrgUnit, createUserInOrgUnit, searchUsersInDomain, createUserInOrgPath, moveUserToOrgPath, updateUser, listCourses, getCourseTeachers, getCourseStudents } from './classroom.js';
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -591,6 +594,12 @@ app.post('/api/sync', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+const distPath = join(__dirname, '..', 'dist');
+app.use(express.static(distPath));
+app.get('*', (req, res) => {
+  res.sendFile(join(distPath, 'index.html'));
 });
 
 const PORT = process.env.PORT || 3003;

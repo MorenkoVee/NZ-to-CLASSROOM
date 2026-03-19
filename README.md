@@ -22,6 +22,17 @@ npm run dev
 
 Відкрийте http://localhost:5173
 
+## Розгортання на Fly.io
+
+1. Додайте в Google Cloud Console redirect URI: `https://nz-to-classroom.fly.dev/callback`
+2. Встановіть секрети:
+   ```bash
+   flyctl secrets set GOOGLE_REDIRECT_URI=https://nz-to-classroom.fly.dev/callback
+   flyctl secrets set GOOGLE_CLIENT_ID=ваш_client_id
+   flyctl secrets set GOOGLE_CLIENT_SECRET=ваш_client_secret
+   ```
+3. Розгорніть: `flyctl deploy`
+
 ## Використання
 
 1. **Увійти через Google** — обліковий запис з доступом до Classroom та Admin (адміністратор домену)

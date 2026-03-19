@@ -1,4 +1,15 @@
 const API = '/api';
+
+function safeParseJson(str, fallback = null) {
+  if (str == null || str === '') return fallback;
+  const s = String(str).trim();
+  if (!s) return fallback;
+  try {
+    return JSON.parse(s);
+  } catch (_) {
+    return fallback;
+  }
+}
 const UA_TO_LATIN = { 'а':'a','б':'b','в':'v','г':'h','ґ':'g','д':'d','е':'e','є':'ie','ж':'zh','з':'z','и':'y','і':'i','ї':'i','й':'i','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u','ф':'f','х':'kh','ц':'ts','ч':'ch','ш':'sh','щ':'shch','ь':'','ю':'iu','я':'ia','ё':'io' };
 const CACHE_KEYS = { parsedItems: 'classroom_parsed_items', teachers: 'classroom_teachers', adminStats: 'classroom_admin_stats', adminClasses: 'classroom_admin_classes', classroomCourses: 'classroom_classroom_courses', courseRosters: 'classroom_course_rosters', journalDetails: 'classroom_journal_details', classStudents: 'classroom_class_students' };
 
@@ -37,10 +48,11 @@ function generateTeacherPassword() {
 function loadTokens() {
   const s = localStorage.getItem('classroom_tokens');
   if (s) {
-    try {
-      tokens = JSON.parse(s);
+    const parsed = safeParseJson(s);
+    if (parsed) {
+      tokens = parsed;
       return true;
-    } catch (_) {}
+    }
   }
   return false;
 }
@@ -59,11 +71,11 @@ function loadFromCache() {
     const ac = localStorage.getItem(CACHE_KEYS.adminClasses);
     const cc = localStorage.getItem(CACHE_KEYS.classroomCourses);
     return {
-      parsedItems: pi ? JSON.parse(pi) : null,
-      teachers: t ? JSON.parse(t) : null,
-      adminStats: st ? JSON.parse(st) : null,
-      adminClasses: ac ? JSON.parse(ac) : null,
-      classroomCourses: cc ? JSON.parse(cc) : null
+      parsedItems: safeParseJson(pi),
+      teachers: safeParseJson(t),
+      adminStats: safeParseJson(st),
+      adminClasses: safeParseJson(ac),
+      classroomCourses: safeParseJson(cc)
     };
   } catch (_) { return {}; }
 }
@@ -278,8 +290,10 @@ function updateAuthUI(user) {
 document.getElementById('btnAuth').onclick = async () => {
   try {
     const r = await fetch(`${API}/auth/url`);
-    const { url } = await r.json();
-    window.location.href = url;
+    const text = await r.text();
+    const data = safeParseJson(text);
+    if (!data || !data.url) throw new Error(data?.error || 'Сервер повернув некоректні дані');
+    window.location.href = data.url;
   } catch (e) {
     showAlertModal('Помилка: ' + e.message, 'Помилка', true);
   }
@@ -296,7 +310,9 @@ if (window.location.pathname === '/callback' || window.location.search.includes(
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ code })
         });
-        const data = await r.json();
+        const text = await r.text();
+        const data = safeParseJson(text);
+        if (!data) throw new Error('Сервер повернув некоректні дані');
         if (data.tokens) {
           saveTokens(data.tokens, data.user);
           window.location.href = '/';
@@ -331,10 +347,12 @@ document.getElementById('btnLogout').onclick = () => {
     }
     const cached = localStorage.getItem('classroom_user');
     if (cached) {
-      try {
-        updateAuthUI(JSON.parse(cached));
+      const user = safeParseJson(cached);
+      if (user) {
+        updateAuthUI(user);
         return;
-      } catch (_) {}
+      }
+      localStorage.removeItem('classroom_user');
     }
     try {
       const r = await fetch(`${API}/auth/user`, {
@@ -342,8 +360,9 @@ document.getElementById('btnLogout').onclick = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tokens })
       });
-      const data = await r.json();
-      if (data.user) {
+      const text = await r.text();
+      const data = safeParseJson(text);
+      if (data && data.user) {
         saveTokens(tokens, data.user);
         updateAuthUI(data.user);
       }
