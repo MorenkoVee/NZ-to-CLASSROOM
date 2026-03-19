@@ -23,7 +23,6 @@ const CACHE_TTL = 30 * 60 * 1000;
 async function loginToNz(page, login, password, fromRedirect = false) {
   if (!fromRedirect) {
     await page.goto('https://nz.ua/', { waitUntil: 'load', timeout: 20000 });
-    await new Promise(r => setTimeout(r, 1500));
   }
   const loginSelectors = [
     'input[name="login"]',
@@ -65,8 +64,7 @@ async function loginToNz(page, login, password, fromRedirect = false) {
         return a ? a.href : null;
       });
       if (href) {
-        await page.goto(href, { waitUntil: 'networkidle2', timeout: 15000 });
-        await new Promise(r => setTimeout(r, 1500));
+        await page.goto(href, { waitUntil: 'load', timeout: 15000 });
         return loginToNz(page, login, password, true);
       }
     }
@@ -75,7 +73,7 @@ async function loginToNz(page, login, password, fromRedirect = false) {
   await loginEl.type(login, { delay: 50 });
   await passEl.type(password, { delay: 50 });
   await Promise.all([
-    page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {}),
+    page.waitForNavigation({ waitUntil: 'load', timeout: 15000 }).catch(() => {}),
     page.evaluate(() => {
       const form = document.querySelector('form');
       if (form) form.submit();
@@ -85,7 +83,6 @@ async function loginToNz(page, login, password, fromRedirect = false) {
       }
     })
   ]);
-  await new Promise(r => setTimeout(r, 1500));
   const cookies = await page.cookies();
   return cookies;
 }
@@ -116,8 +113,7 @@ export async function fetchWithPuppeteer(url, options = {}) {
       }
     }
     await page.goto(url, { waitUntil: 'load', timeout: 25000 });
-    await page.waitForSelector('table.journal-choose, table', { timeout: 8000 }).catch(() => {});
-    await new Promise(r => setTimeout(r, 1500));
+    await page.waitForSelector('table.journal-choose, table', { timeout: 10000 }).catch(() => {});
     const html = await page.content();
     return html;
   } finally {
