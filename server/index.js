@@ -376,7 +376,9 @@ function findTeacherEmail(emailMap, nzName) {
 
 function normalizeClassForMatch(s) {
   if (!s || typeof s !== 'string') return '';
-  return s.split('(')[0].trim().replace(/\s+/g, ' ').replace(/-/g, '');
+  let t = s.split('(')[0].trim().replace(/\s+/g, ' ');
+  t = t.replace(/[\u2010-\u2015\u2212\-–—]/g, '-').trim();
+  return t.replace(/-/g, '');
 }
 
 function findStudentEmail(adminStudents, studentName) {

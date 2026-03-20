@@ -436,6 +436,7 @@ function normalizeClassLabel(label) {
   let s = label.split('(')[0].trim();
   s = s.replace(/\s*клас\s*$/gi, '').trim();
   s = s.replace(/-\s*$/, '').trim();
+  s = s.replace(/[\u2010-\u2015\u2212\-–—]/g, '-').replace(/\s+/g, ' ').trim();
   return s;
 }
 
@@ -453,14 +454,14 @@ function classLabelMatches(section, journalClassLabel) {
   const normJ = normalizeClassLabel(j);
   if (normS !== normJ) return false;
   const extractSub = (x) => (x.match(/\(([^)]+)\)/) || [])[1] || '';
-  const subS = extractSub(s).replace(/\s+/g, ' ').toLowerCase();
-  const subJ = extractSub(j).replace(/\s+/g, ' ').toLowerCase();
+  const subS = extractSub(s).replace(/\s+/g, ' ').toLowerCase().trim();
+  const subJ = extractSub(j).replace(/\s+/g, ' ').toLowerCase().trim();
   if (!subS && !subJ) return true;
   if (!subS || !subJ) return subS === subJ;
   const getSubNum = (x) => {
-    if (/1|і\b|перш/i.test(x)) return 1;
-    if (/2|іі|друг/i.test(x)) return 2;
-    if (/3|ііі|трет/i.test(x)) return 3;
+    if (/1|і\b|^i\b|перш|1\s*підг/i.test(x)) return 1;
+    if (/2|іі|ii|її|друг|2\s*підг|іі\s*підг|ii\s*підг/i.test(x)) return 2;
+    if (/3|ііі|iii|трет|3\s*підг|ііі\s*підг/i.test(x)) return 3;
     const m = x.match(/\d/);
     return m ? parseInt(m[0], 10) : 0;
   };
