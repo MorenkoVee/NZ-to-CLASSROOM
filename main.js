@@ -459,9 +459,9 @@ function classLabelMatches(section, journalClassLabel) {
   if (!subS && !subJ) return true;
   if (!subS || !subJ) return subS === subJ;
   const getSubNum = (x) => {
-    if (/^1$|^і\s|^і$|^i\s|^i$|перш|1\s*підг|\(\s*і\s*\)/i.test(x)) return 1;
-    if (/^2$|іі|ii|її|друг|2\s*підг|іі\s*підг|ii\s*підг|\(\s*іі\s*\)|\(\s*2\s*\)/i.test(x)) return 2;
-    if (/^3$|ііі|iii|трет|3\s*підг|ііі\s*підг|\(\s*3\s*\)/i.test(x)) return 3;
+    if (/^1$|^і\s|^і$|^i\s|^i$|перш|1\s*підг|підг.*1|1.*підг|\(\s*і\s*\)/i.test(x)) return 1;
+    if (/^2$|іі|ii|її|друг|2\s*підг|підг.*2|2.*підг|2підг|іі\s*підг|ii\s*підг|\(\s*іі\s*\)|\(\s*2\s*\)/i.test(x)) return 2;
+    if (/^3$|ііі|iii|трет|3\s*підг|підг.*3|3.*підг|3підг|ііі\s*підг|\(\s*3\s*\)/i.test(x)) return 3;
     const m = x.match(/\d/);
     return m ? parseInt(m[0], 10) : 0;
   };
