@@ -2827,6 +2827,9 @@ document.getElementById('btnLoadClassroomCourses').onclick = async () => {
     showAlertModal('Спочатку увійдіть через Google', 'Увага');
     return;
   }
+  Object.keys(courseRosterCache).forEach(k => delete courseRosterCache[k]);
+  localStorage.removeItem(CACHE_KEYS.courseRosters);
+  courseRosterLoading.clear();
   const ok = await loadClassroomCourses();
   if (ok) preloadCourseRosters();
 };
@@ -2845,6 +2848,284 @@ document.getElementById('btnAddTeacherToSelectedCourses').onclick = async () => 
     return;
   }
   openAddTeacherToMassCoursesModal(courseIds, courseRows);
+};
+
+function showStudentChoiceModal(studentName, matches) {
+  return new Promise(resolve => {
+    const modal = document.getElementById('modalSelectStudent');
+    const title = document.getElementById('modalSelectStudentTitle');
+    const content = document.getElementById('modalSelectStudentContent');
+    const skipBtn = document.getElementById('btnModalSelectStudentSkip');
+    if (!modal || !title || !content) { resolve(null); return; }
+    title.textContent = `Знайдено кілька збігів для «${studentName}». Оберіть учня:`;
+    content.innerHTML = '<table style="font-size:0.9rem;width:100%;"><thead><tr><th>ПІБ</th><th>Email</th><th>Підрозділ</th><th></th></tr></thead><tbody>' +
+      matches.map(u => {
+        const name = [(u.familyName || '').trim(), (u.givenName || '').trim()].filter(Boolean).join(' ') || u.email || '';
+        return `<tr class="row-select-student" data-email="${escapeHtml(u.email || '')}" data-family="${escapeHtml(u.familyName || '')}" data-given="${escapeHtml(u.givenName || '')}" style="cursor:pointer;"><td>${escapeHtml(name)}</td><td>${escapeHtml(u.email || '')}</td><td style="font-size:0.8rem;color:var(--text-muted)">${escapeHtml(u.orgUnitPath || '')}</td><td><button type="button" class="btn-secondary btn-sm">Обрати</button></td></tr>`;
+      }).join('') +
+      '</tbody></table>';
+    const finish = (result) => {
+      modal.style.display = 'none';
+      modal.onclick = null;
+      if (skipBtn) skipBtn.onclick = null;
+      content.querySelectorAll('.row-select-student, .btn-select-student').forEach(el => el.onclick = null);
+      resolve(result);
+    };
+    modal.style.display = 'flex';
+    modal.onclick = (e) => { if (e.target === modal) finish(null); };
+    skipBtn.onclick = () => finish(null);
+    content.querySelectorAll('.row-select-student').forEach(tr => {
+      tr.onclick = (e) => {
+        e.stopPropagation();
+        const u = matches.find(m => (m.email || '') === (tr.dataset.email || ''));
+        finish(u || null);
+      };
+    });
+  });
+}
+
+async function searchStudentInGoogle(studentName) {
+  const parts = (studentName || '').trim().split(/\s+/).filter(Boolean);
+  const searchTerms = [...new Set(parts)];
+  const allUsers = [];
+  for (const term of searchTerms) {
+    const r = await fetch(`${API}/users/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tokens, searchTerm: term })
+    });
+    const text = await r.text();
+    const data = safeParseJson(text);
+    if (data?.error) throw new Error(data.error);
+    (data.users || []).forEach(u => {
+      if (!allUsers.find(x => (x.email || '').toLowerCase() === (u.email || '').toLowerCase())) allUsers.push(u);
+    });
+  }
+  const targetKey = normalizeNameForMatch(studentName);
+  const targetKeySwapped = parts.length >= 2 ? normalizeNameForMatch(parts.slice(1).concat(parts[0]).join(' ')) : targetKey;
+  return allUsers.filter(u => {
+    const key1 = normalizeNameForMatch(`${(u.familyName || '').trim()} ${(u.givenName || '').trim()}`);
+    const key2 = normalizeNameForMatch(`${(u.givenName || '').trim()} ${(u.familyName || '').trim()}`);
+    return key1 === targetKey || key2 === targetKey || key1 === targetKeySwapped || key2 === targetKeySwapped;
+  });
+}
+
+function getMissingStudentsInCourse(name, section, students) {
+  if (!students?.length) return [];
+  const journalStudents = getStudentsFromJournalsForCourse(name || '', section || '');
+  const { journalKeys } = getStudentMatchSetsFromNames(students, journalStudents);
+  if (!journalKeys.size) return [];
+  const toRemove = [];
+  for (const s of students) {
+    const fn = s.familyName || parseStudentName(s.name || '').familyName;
+    const gn = s.givenName || parseStudentName(s.name || '').givenName;
+    const key1 = normalizeNameForMatch(`${fn} ${gn}`);
+    const key2 = normalizeNameForMatch(`${gn} ${fn}`);
+    if (!journalKeys.has(key1) && !journalKeys.has(key2)) toRemove.push(s.email);
+  }
+  return toRemove.filter(Boolean);
+}
+
+function getMissingJournalStudentsInCourse(name, section, googleStudents) {
+  const journalStudents = getStudentsFromJournalsForCourse(name || '', section || '');
+  if (!journalStudents.length) return [];
+  const { googleKeys } = getStudentMatchSetsFromNames(googleStudents || [], journalStudents);
+  return journalStudents.filter(js => {
+    const key = normalizeNameForMatch(js);
+    const parts = (js || '').trim().split(/\s+/).filter(Boolean);
+    const key2 = parts.length >= 2 ? normalizeNameForMatch(parts.slice(1).concat(parts[0]).join(' ')) : key;
+    return !googleKeys.has(key) && !googleKeys.has(key2);
+  });
+}
+
+document.getElementById('btnAddMissingJournalToSelectedCourses').onclick = async () => {
+  if (!loadTokens()) {
+    showAlertModal('Спочатку увійдіть через Google', 'Увага');
+    return;
+  }
+  const listEl = document.getElementById('classroomCoursesList');
+  const checkboxes = listEl ? [...listEl.querySelectorAll('.course-checkbox:checked')] : [];
+  const courseRows = checkboxes.map(cb => cb.closest('.course-row')).filter(Boolean);
+  const courseIds = courseRows.map(row => row?.dataset?.id).filter(Boolean);
+  if (!courseIds.length) {
+    showAlertModal('Оберіть курси', 'Увага');
+    return;
+  }
+  const toAddByCourse = [];
+  for (let i = 0; i < courseIds.length; i++) {
+    const cid = courseIds[i];
+    const row = courseRows[i];
+    let roster = courseRosterCache[cid] || getCourseRosterCache(cid);
+    if (!roster?.students) {
+      try {
+        const r = await fetch(`${API}/classroom/course/roster`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tokens, courseId: cid })
+        });
+        const text = await r.text();
+        const data = safeParseJson(text);
+        if (!data?.error) roster = { teachers: data.teachers || [], students: data.students || [] };
+      } catch (_) {}
+    }
+    if (roster) {
+      const name = row?.dataset?.name || '';
+      const section = row?.dataset?.section || '';
+      const missing = getMissingJournalStudentsInCourse(name, section, roster.students);
+      if (missing.length) toAddByCourse.push({ courseId: cid, row, name, section, missingStudents: missing, roster });
+    }
+  }
+  const totalToAdd = toAddByCourse.reduce((sum, x) => sum + x.missingStudents.length, 0);
+  if (!totalToAdd) {
+    showAlertModal('Серед обраних курсів немає учнів з журналу для додавання (усі вже в курсі).', 'Повідомлення');
+    return;
+  }
+  if (!(await showConfirmModal(`Знайти та додати до ${toAddByCourse.length} курсів учнів з журналу (${totalToAdd} учнів)? При кількох збігах буде запропоновано обрати.`, 'Додати учнів з журналу'))) return;
+  const btn = document.getElementById('btnAddMissingJournalToSelectedCourses');
+  btn.disabled = true;
+  btn.textContent = 'Обробка...';
+  let added = 0;
+  let skipped = 0;
+  let errors = 0;
+  try {
+    for (const { courseId, row, name, section, missingStudents, roster } of toAddByCourse) {
+      for (const studentName of missingStudents) {
+        try {
+          const matches = await searchStudentInGoogle(studentName);
+          if (matches.length === 0) { skipped++; continue; }
+          let userToAdd = null;
+          if (matches.length === 1) userToAdd = matches[0];
+          else userToAdd = await showStudentChoiceModal(studentName, matches);
+          if (!userToAdd) { skipped++; continue; }
+          const r = await fetch(`${API}/classroom/course/add-student`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tokens, courseId, email: userToAdd.email })
+          });
+          const text = await r.text();
+          const data = safeParseJson(text);
+          if (data?.error) throw new Error(data.error);
+          added++;
+          if (roster) {
+            roster.students = roster.students || [];
+            roster.students.push({ email: userToAdd.email, familyName: userToAdd.familyName, givenName: userToAdd.givenName });
+            roster.students.sort((a, b) => (a.familyName || '').localeCompare(b.familyName || '', 'uk'));
+            courseRosterCache[courseId] = roster;
+            setCourseRosterCache(courseId, roster);
+          }
+        } catch (e) {
+          errors++;
+        }
+      }
+      if (row) {
+        const detailRow = row.nextElementSibling;
+        if (detailRow?.classList?.contains('course-detail-row')) {
+          detailRow.remove();
+          renderCourseRosterRow(row, name, section || '', courseRosterCache[courseId]?.teachers || [], courseRosterCache[courseId]?.students || []);
+        }
+      }
+    }
+    renderDashboardMismatches();
+    const msg = [];
+    if (added) msg.push(`Додано: ${added}`);
+    if (skipped) msg.push(`Пропущено: ${skipped}`);
+    if (errors) msg.push(`Помилок: ${errors}`);
+    showAlertModal(msg.length ? msg.join('. ') : 'Завершено.');
+  } catch (e) {
+    showAlertModal('Помилка: ' + (e.message || e.name), 'Помилка', true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Додати учнів з журналу';
+  }
+};
+
+document.getElementById('btnRemoveMissingFromSelectedCourses').onclick = async () => {
+  if (!loadTokens()) {
+    showAlertModal('Спочатку увійдіть через Google', 'Увага');
+    return;
+  }
+  const listEl = document.getElementById('classroomCoursesList');
+  const checkboxes = listEl ? [...listEl.querySelectorAll('.course-checkbox:checked')] : [];
+  const courseRows = checkboxes.map(cb => cb.closest('.course-row')).filter(Boolean);
+  const courseIds = courseRows.map(row => row?.dataset?.id).filter(Boolean);
+  if (!courseIds.length) {
+    showAlertModal('Оберіть курси', 'Увага');
+    return;
+  }
+  const toRemoveByCourse = [];
+  for (let i = 0; i < courseIds.length; i++) {
+    const cid = courseIds[i];
+    const row = courseRows[i];
+    let roster = courseRosterCache[cid] || getCourseRosterCache(cid);
+    if (!roster?.students) {
+      try {
+        const r = await fetch(`${API}/classroom/course/roster`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tokens, courseId: cid })
+        });
+        const text = await r.text();
+        const data = safeParseJson(text);
+        if (!data?.error) {
+          roster = { teachers: data.teachers || [], students: data.students || [] };
+        }
+      } catch (_) {}
+    }
+    if (roster?.students?.length) {
+      const name = row?.dataset?.name || '';
+      const section = row?.dataset?.section || '';
+      const missing = getMissingStudentsInCourse(name, section, roster.students);
+      if (missing.length) toRemoveByCourse.push({ courseId: cid, emails: missing, row, name, section });
+    }
+  }
+  const totalToRemove = toRemoveByCourse.reduce((sum, x) => sum + x.emails.length, 0);
+  if (!totalToRemove) {
+    showAlertModal('Серед обраних курсів немає учнів, яких потрібно видалити (усі є в журналі).', 'Повідомлення');
+    return;
+  }
+  if (!(await showConfirmModal(`Видалити ${totalToRemove} учнів з ${toRemoveByCourse.length} курсів? Ці учні відсутні в журналі.`, 'Видалити з курсу'))) return;
+  const btn = document.getElementById('btnRemoveMissingFromSelectedCourses');
+  btn.disabled = true;
+  btn.textContent = 'Видалення...';
+  let removed = 0;
+  let errors = 0;
+  try {
+    for (const { courseId, emails, row, name, section } of toRemoveByCourse) {
+      for (const email of emails) {
+        try {
+          const r = await fetch(`${API}/classroom/course/remove-student`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tokens, courseId, email })
+          });
+          const text = await r.text();
+          const data = safeParseJson(text);
+          if (data?.error) throw new Error(data.error);
+          removed++;
+          if (courseRosterCache[courseId]) {
+            courseRosterCache[courseId].students = (courseRosterCache[courseId].students || []).filter(st => (st.email || '').toLowerCase() !== email.toLowerCase());
+            setCourseRosterCache(courseId, courseRosterCache[courseId]);
+          }
+        } catch (e) {
+          errors++;
+        }
+      }
+      if (row) {
+        const detailRow = row.nextElementSibling;
+        if (detailRow?.classList?.contains('course-detail-row')) {
+          detailRow.remove();
+          renderCourseRosterRow(row, name, section || '', courseRosterCache[courseId]?.teachers || [], courseRosterCache[courseId]?.students || []);
+        }
+      }
+    }
+    renderDashboardMismatches();
+    showAlertModal(errors ? `Видалено ${removed} учнів. Помилок: ${errors}` : `Видалено ${removed} учнів з курсів.`);
+  } catch (e) {
+    showAlertModal('Помилка: ' + (e.message || e.name), 'Помилка', true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Видалити учнів відсутніх у журналі';
+  }
 };
 
 document.getElementById('btnArchiveSelectedCourses').onclick = async () => {
