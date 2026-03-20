@@ -459,9 +459,9 @@ function classLabelMatches(section, journalClassLabel) {
   if (!subS && !subJ) return true;
   if (!subS || !subJ) return subS === subJ;
   const getSubNum = (x) => {
-    if (/^1$|^і\s|^і$|^i\s|^i$|перш|1\s*підг|підг.*1|1.*підг|\(\s*і\s*\)/i.test(x)) return 1;
-    if (/^2$|іі|ii|її|друг|2\s*підг|підг.*2|2.*підг|2підг|іі\s*підг|ii\s*підг|\(\s*іі\s*\)|\(\s*2\s*\)/i.test(x)) return 2;
-    if (/^3$|ііі|iii|трет|3\s*підг|підг.*3|3.*підг|3підг|ііі\s*підг|\(\s*3\s*\)/i.test(x)) return 3;
+    if (/^1$|^і\s|^і$|^i\s|^i$|перш|1\s*підг|підг\s*1$|підг.*\b1\b|\(\s*і\s*\)/i.test(x)) return 1;
+    if (/^2$|іі|ii|її|друг|2\s*підг|підг\s*2|підг.*\b2\b|2\b.*підг|2підг|іі\s*підг|ii\s*підг|\(\s*іі\s*\)|\(\s*2\s*\)/i.test(x)) return 2;
+    if (/^3$|ііі|iii|трет|3\s*підг|підг\s*3|підг.*\b3\b|3\b.*підг|3підг|ііі\s*підг|\(\s*3\s*\)/i.test(x)) return 3;
     const m = x.match(/\d/);
     return m ? parseInt(m[0], 10) : 0;
   };
@@ -494,8 +494,10 @@ function parseCourseForJournal(courseName, courseSection) {
 
 function getStudentsFromJournalsForCourse(subject, section) {
   const parsed = parseCourseForJournal(subject, section);
-  const normSubject = normalizeSubject(parsed.subject || '');
+  let normSubject = normalizeSubject(parsed.subject || '');
   const normSection = (parsed.section || '').trim();
+  const subjectIsClass = looksLikeClassLabel(normSubject);
+  if (subjectIsClass) normSubject = '';
   const names = new Set();
   try {
     const allDetails = localStorage.getItem(CACHE_KEYS.journalDetails);
@@ -503,7 +505,7 @@ function getStudentsFromJournalsForCourse(subject, section) {
     const details = JSON.parse(allDetails);
     for (const item of parsedItems) {
       const itemSubject = normalizeSubject(item.subject || '');
-      if (itemSubject !== normSubject) continue;
+      if (normSubject && itemSubject.toLowerCase() !== normSubject.toLowerCase()) continue;
       for (const c of item.classes || []) {
         const classLabel = c.classLabel || '';
         if (!classLabelMatches(normSection, classLabel)) continue;
