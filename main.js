@@ -269,7 +269,55 @@ function updateManagePanelState() {
     warnEl.style.display = 'none';
     btn.disabled = false;
   }
+  loadCreatedStudentsDates();
 }
+
+async function loadCreatedStudentsDates() {
+  const sel = document.getElementById('createdStudentsDate');
+  if (!sel) return;
+  try {
+    const r = await fetch(`${API}/created-students/dates`);
+    const data = await r.json().catch(() => ({}));
+    const dates = data.dates || [];
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">— оберіть дату —</option>' + dates.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
+    if (cur && dates.includes(cur)) sel.value = cur;
+  } catch (_) {}
+}
+
+document.getElementById('btnDownloadCreatedStudents').onclick = async () => {
+  const sel = document.getElementById('createdStudentsDate');
+  if (!sel?.value) {
+    showAlertModal('Оберіть дату', 'Увага');
+    return;
+  }
+  try {
+    const r = await fetch(`${API}/created-students?date=${encodeURIComponent(sel.value)}`);
+    const data = await r.json().catch(() => ({}));
+    const byClass = data.byClass || {};
+    const lines = [];
+    lines.push('Клас\tПрізвище\tІм\'я\tEmail\tПароль');
+    const classes = Object.keys(byClass).sort();
+    for (const cls of classes) {
+      const students = byClass[cls] || [];
+      for (const s of students) {
+        lines.push([cls, s.familyName || '', s.givenName || '', s.email || '', s.password || ''].join('\t'));
+      }
+    }
+    if (lines.length <= 1) {
+      showAlertModal('Немає даних для обраної дати', 'Повідомлення');
+      return;
+    }
+    const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `створені-учні-${sel.value}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (e) {
+    showAlertModal('Помилка: ' + (e.message || e.name), 'Помилка', true);
+  }
+};
 
 function updateAuthUI(user) {
   const status = document.getElementById('authStatus');
@@ -628,7 +676,11 @@ function getMismatchClasses() {
     const roster = courseRosterCache[courseId] || getCourseRosterCache(courseId);
     const students = roster?.students || [];
     const journalStudents = getStudentsFromJournalsForCourse(name, section);
-    if (!journalStudents.length) continue;
+    if (!journalStudents.length) {
+      const displayName = (section && name) ? `${section} — ${name}` : (section || name);
+      classroomMismatches.push({ name: displayName, courseId, noJournalData: true });
+      continue;
+    }
     const { googleKeys, journalKeys } = getStudentMatchSetsFromNames(students, journalStudents);
     const missingInJournal = (students || []).some(s => {
       const fn = (s.familyName || parseStudentName(s.name || '').familyName || '').trim();
@@ -688,8 +740,9 @@ function renderDashboardMismatches() {
   }
   if (classroomMismatches.length) {
     html += '<div class="mismatch-section"><div class="mismatch-label">Classroom ↔ Журнал</div><ul class="mismatch-list">';
-    classroomMismatches.forEach(({ name, courseId }) => {
-      html += `<li class="mismatch-item" data-panel="classroom" data-course-id="${escapeHtml(courseId)}">${escapeHtml(name)}</li>`;
+    classroomMismatches.forEach(({ name, courseId, noJournalData }) => {
+      const label = noJournalData ? `${name} (немає даних журналу)` : name;
+      html += `<li class="mismatch-item" data-panel="classroom" data-course-id="${escapeHtml(courseId)}">${escapeHtml(label)}</li>`;
     });
     html += '</ul></div>';
   }
@@ -737,6 +790,19 @@ function updateStats() {
   if (s3j) s3j.textContent = getClassesFromJournalsCount();
   if (s4g) s4g.textContent = adminStudentsCount;
   if (s4j) s4j.textContent = journalDetailsLoaded ? (jStats.studentsCount ?? 0) : 'Завантаження...';
+  const sj = document.getElementById('statJournals');
+  const sc = document.getElementById('statCourses');
+  if (sj) sj.textContent = parsedItems.flatMap(i => i.classes || []).length;
+  if (sc) {
+    const validCount = classroomCourses.filter(c => {
+      const name = (c.name || '').trim();
+      const section = (c.section || '').trim();
+      if (!name || !section) return false;
+      const journalStudents = getStudentsFromJournalsForCourse(name, section);
+      return journalStudents.length > 0;
+    }).length;
+    sc.textContent = validCount;
+  }
   renderDashboardMismatches();
 }
 
@@ -856,6 +922,70 @@ function renderTeachersTable() {
 function closeAddTeacherToCourseModal() {
   const modal = document.getElementById('modalAddTeacherToCourse');
   if (modal) modal.style.display = 'none';
+}
+
+function openEditCourseModal(courseId) {
+  if (!loadTokens()) { showAlertModal('Спочатку увійдіть через Google', 'Увага'); return; }
+  const row = [...document.querySelectorAll('.course-row')].find(r => (r.dataset.id || '') === courseId);
+  if (!row) return;
+  const name = row.dataset.name || '';
+  const section = row.dataset.section || '';
+  const modal = document.getElementById('modalEditCourse');
+  const sectionInput = document.getElementById('modalEditCourseSection');
+  const nameInput = document.getElementById('modalEditCourseName');
+  if (!modal || !sectionInput || !nameInput) return;
+  sectionInput.value = section;
+  nameInput.value = name;
+  modal.dataset.editCourseId = courseId;
+  modal.style.display = 'flex';
+  modal.onclick = (e) => { if (e.target === modal) closeEditCourseModal(); };
+  document.getElementById('btnModalEditCourseCancel').onclick = closeEditCourseModal;
+  document.getElementById('btnModalEditCourseSubmit').onclick = async () => {
+    const newSection = sectionInput.value.trim();
+    const newName = nameInput.value.trim();
+    try {
+      const r = await fetch(`${API}/classroom/course/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tokens, courseId, name: newName, section: newSection })
+      });
+      const data = await r.json().catch(() => ({}));
+      if (data.error) throw new Error(data.error);
+      const course = classroomCourses.find(c => (c.id || c.courseId) === courseId);
+      if (course) {
+        course.name = newName;
+        course.section = newSection;
+      }
+      row.dataset.name = newName;
+      row.dataset.section = newSection;
+      const sectionTd = row.querySelector('td:nth-child(2)');
+      const nameTd = row.querySelector('td:nth-child(3)');
+      if (sectionTd) sectionTd.textContent = newSection;
+      if (nameTd) nameTd.textContent = newName;
+      const detailRow = row.nextElementSibling;
+      if (detailRow?.classList?.contains('course-detail-row')) {
+        detailRow.remove();
+        const roster = courseRosterCache[courseId] || getCourseRosterCache(courseId);
+        renderCourseRosterRow(row, newName, newSection || '', roster?.teachers || [], roster?.students || []);
+      }
+      saveToCache();
+      renderDashboardMismatches();
+      updateStats();
+      closeEditCourseModal();
+    } catch (e) {
+      showAlertModal('Помилка: ' + (e.message || e.name), 'Помилка', true);
+    }
+  };
+}
+
+function closeEditCourseModal() {
+  const modal = document.getElementById('modalEditCourse');
+  if (modal) modal.style.display = 'none';
+  modal.onclick = null;
+  const cancelBtn = document.getElementById('btnModalEditCourseCancel');
+  const submitBtn = document.getElementById('btnModalEditCourseSubmit');
+  if (cancelBtn) cancelBtn.onclick = null;
+  if (submitBtn) submitBtn.onclick = null;
 }
 
 async function openAddTeacherToCourseModal(courseId, courseName, courseSection, courseRow) {
@@ -1535,18 +1665,24 @@ function renderClassroomTable() {
   if (!listEl || !classroomCourses.length) return;
   listEl.style.display = 'block';
   const sorted = sortCoursesBySection(classroomCourses);
-  listEl.innerHTML = '<table><thead><tr><th style="width:2.5rem;"><input type="checkbox" id="courseSelectAll" title="Обрати всі"></th><th>Секція</th><th>Курс</th></tr></thead><tbody>' +
+  listEl.innerHTML = '<table><thead><tr><th style="width:2.5rem;"><input type="checkbox" id="courseSelectAll" title="Обрати всі"></th><th>Секція</th><th>Курс</th><th style="width:3rem;"></th></tr></thead><tbody>' +
     sorted.map((c, i) => {
       const name = escapeHtml(c.name || '');
       const section = escapeHtml(c.section || '');
       const cid = escapeHtml(c.id || '');
-      return `<tr class="course-row" data-id="${cid}" data-name="${name}" data-section="${escapeHtml(c.section || '')}" data-idx="${i}"><td class="course-check-cell"><input type="checkbox" class="course-checkbox" data-course-id="${cid}"></td><td>${section}</td><td>${name}</td></tr>`;
+      return `<tr class="course-row" data-id="${cid}" data-name="${escapeHtml(c.name || '')}" data-section="${escapeHtml(c.section || '')}" data-idx="${i}"><td class="course-check-cell"><input type="checkbox" class="course-checkbox" data-course-id="${cid}"></td><td>${section}</td><td>${name}</td><td class="course-edit-cell"><button type="button" class="btn-edit-course btn-secondary btn-sm" data-course-id="${cid}" title="Редагувати">✎</button></td></tr>`;
     }).join('') +
     '</tbody></table>';
   listEl.querySelectorAll('.course-row').forEach(row => {
     row.onclick = (e) => {
-      if (e.target.closest('.course-check-cell')) return;
+      if (e.target.closest('.course-check-cell') || e.target.closest('.course-edit-cell')) return;
       toggleCourseRoster(row);
+    };
+  });
+  listEl.querySelectorAll('.btn-edit-course').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      openEditCourseModal(btn.dataset.courseId);
     };
   });
   const selectAll = document.getElementById('courseSelectAll');
@@ -1648,7 +1784,7 @@ function renderCourseRosterRow(row, name, section, teachers, students) {
   const teachersLabelHtml = '<div class="class-students-label" style="display:flex;align-items:center;gap:0.5rem;"><span>Викладачі</span>' + addTeacherBtn + '</div>';
   const studentsTable = students?.length ? '<table class="class-students-table course-roster-table"><thead><tr><th>#</th><th>Прізвище та Ім\'я</th><th>Email</th><th></th></tr></thead><tbody>' + studentsRows + '</tbody></table>' : '<p style="color:var(--text-muted);margin:0;">Немає учнів</p>';
   const journalTable = journalStudents.length ? '<table class="class-students-table course-roster-table"><thead><tr><th>#</th><th>Прізвище та Ім\'я</th><th></th></tr></thead><tbody>' + journalRows + '</tbody></table>' : (areAllJournalDetailsLoaded() ? '<p style="color:var(--text-muted);margin:0;">Немає даних</p>' : '<p class="status loading" style="margin:0;">Завантаження...</p>');
-  tr.innerHTML = '<td colspan="2"><div class="class-students"><strong>' + escapeHtml(name) + '</strong>' +
+  tr.innerHTML = '<td colspan="4"><div class="class-students"><strong>' + escapeHtml(name) + '</strong>' +
     '<div class="class-students-grid"><div>' + teachersLabelHtml + teachersTable + '</div>' +
     '<div><div class="class-students-label">Учні</div>' + studentsTable + '</div>' +
     '<div><div class="class-students-label">Учні з журналу</div>' + journalTable + '</div></div></div></td>';
@@ -2991,20 +3127,39 @@ document.getElementById('btnAddMissingJournalToSelectedCourses').onclick = async
     for (const { courseId, row, name, section, missingStudents, roster } of toAddByCourse) {
       for (const studentName of missingStudents) {
         try {
-          const matches = await searchStudentInGoogle(studentName);
-          if (matches.length === 0) { skipped++; continue; }
+          let matches = await searchStudentInGoogle(studentName);
           let userToAdd = null;
+          let createdViaApi = false;
           if (matches.length === 1) userToAdd = matches[0];
-          else userToAdd = await showStudentChoiceModal(studentName, matches);
+          else if (matches.length > 1) userToAdd = await showStudentChoiceModal(studentName, matches);
+          else {
+            const cr = await fetch(`${API}/created-students/create-and-add`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                tokens,
+                studentName,
+                className: name,
+                courseId
+              })
+            });
+            const crData = safeParseJson(await cr.text());
+            if (!crData?.error && crData?.email) {
+              userToAdd = { email: crData.email, familyName: crData.familyName, givenName: crData.givenName };
+              createdViaApi = true;
+            }
+          }
           if (!userToAdd) { skipped++; continue; }
-          const r = await fetch(`${API}/classroom/course/add-student`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tokens, courseId, email: userToAdd.email })
-          });
-          const text = await r.text();
-          const data = safeParseJson(text);
-          if (data?.error) throw new Error(data.error);
+          if (!createdViaApi) {
+            const r = await fetch(`${API}/classroom/course/add-student`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ tokens, courseId, email: userToAdd.email })
+            });
+            const text = await r.text();
+            const data = safeParseJson(text);
+            if (data?.error) throw new Error(data.error);
+          }
           added++;
           if (roster) {
             roster.students = roster.students || [];
@@ -3026,6 +3181,7 @@ document.getElementById('btnAddMissingJournalToSelectedCourses').onclick = async
       }
     }
     renderDashboardMismatches();
+    loadCreatedStudentsDates();
     const msg = [];
     if (added) msg.push(`Додано: ${added}`);
     if (skipped) msg.push(`Пропущено: ${skipped}`);
@@ -3280,6 +3436,7 @@ document.getElementById('btnSync').onclick = async () => {
       loadClassroomCourses().then(ok => { if (ok) preloadCourseRosters(); });
       renderClassroomTable();
       renderDashboardMismatches();
+      loadCreatedStudentsDates();
     }
   } catch (e) {
     status.className = 'status error';

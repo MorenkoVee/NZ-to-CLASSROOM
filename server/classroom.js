@@ -56,6 +56,21 @@ export async function getTeachersFromAdmin(tokens, ouName = 'Вчителі') {
   return teachers;
 }
 
+async function getOrgUnitChildrenRecursive(admin, customerId, parentPath, classes, maxDepth = 5) {
+  if (maxDepth <= 0) return;
+  try {
+    const res = await admin.orgunits.list({
+      customerId,
+      orgUnitPath: parentPath,
+      type: 'CHILDREN'
+    });
+    for (const o of res.data.organizationUnits || []) {
+      classes.push({ name: o.name, orgUnitPath: o.orgUnitPath, orgUnitId: o.orgUnitId });
+      await getOrgUnitChildrenRecursive(admin, customerId, o.orgUnitPath, classes, maxDepth - 1);
+    }
+  } catch (_) {}
+}
+
 export async function getClassesFromAdmin(tokens, parentOuName = 'Учні') {
   const auth = getOAuth2Client(tokens);
   const admin = google.admin({ version: 'directory_v1', auth });
@@ -69,17 +84,9 @@ export async function getClassesFromAdmin(tokens, parentOuName = 'Учні') {
     );
     if (ou) parentPath = ou.orgUnitPath;
   } catch (_) {}
-  const childrenRes = await admin.orgunits.list({
-    customerId: 'my_customer',
-    orgUnitPath: parentPath,
-    type: 'CHILDREN'
-  });
-  const classes = (childrenRes.data.organizationUnits || []).map(o => ({
-    name: o.name,
-    orgUnitPath: o.orgUnitPath,
-    orgUnitId: o.orgUnitId
-  }));
-  return classes;
+  const allClasses = [];
+  await getOrgUnitChildrenRecursive(admin, 'my_customer', parentPath, allClasses);
+  return allClasses;
 }
 
 export async function createUserInOrgUnit(tokens, { givenName, familyName, primaryEmail, password }, ouName = 'Вчителі') {
@@ -319,6 +326,21 @@ export async function archiveCourse(tokens, courseId) {
     id: courseId,
     updateMask: 'courseState',
     requestBody: { courseState: 'ARCHIVED' }
+  });
+  return { success: true };
+}
+
+export async function updateCourse(tokens, courseId, name, section) {
+  const classroom = getClassroomClient(tokens);
+  const requestBody = {};
+  if (name !== undefined) requestBody.name = name;
+  if (section !== undefined) requestBody.section = section;
+  if (Object.keys(requestBody).length === 0) return { success: true };
+  const updateMask = Object.keys(requestBody).join(',');
+  await classroom.courses.patch({
+    id: courseId,
+    updateMask,
+    requestBody
   });
   return { success: true };
 }

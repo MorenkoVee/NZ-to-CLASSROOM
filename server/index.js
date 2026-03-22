@@ -1,12 +1,12 @@
 import 'dotenv/config';
 import express from 'express';
-import { writeFileSync } from 'fs';
+import { writeFileSync, readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import cors from 'cors';
 import { fetchWithPuppeteer } from './fetcher.js';
 import { parseJournalList, parseJournalPage, parseJournalDetails } from './parser.js';
-import { getClassroomClient, createCourse, addTeacher, addStudentToCourse, removeStudentFromCourse, removeTeacherFromCourse, archiveCourse, getAuthUrl, getTokensFromCode, getTeachersFromAdmin, getClassesFromAdmin, getUsersFromOrgUnit, getUserInfo, moveUserToOrgUnit, createUserInOrgUnit, searchUsersInDomain, createUserInOrgPath, moveUserToOrgPath, updateUser, listCourses, getCourseTeachers, getCourseStudents } from './classroom.js';
+import { getClassroomClient, createCourse, addTeacher, addStudentToCourse, removeStudentFromCourse, removeTeacherFromCourse, archiveCourse, updateCourse, getAuthUrl, getTokensFromCode, getTeachersFromAdmin, getClassesFromAdmin, getUsersFromOrgUnit, getUserInfo, moveUserToOrgUnit, createUserInOrgUnit, searchUsersInDomain, createUserInOrgPath, moveUserToOrgPath, updateUser, listCourses, getCourseTeachers, getCourseStudents } from './classroom.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -14,6 +14,62 @@ app.use(cors());
 app.use(express.json());
 
 const teacherEmailMap = new Map();
+const UA_TO_LATIN = { 'а':'a','б':'b','в':'v','г':'h','ґ':'g','д':'d','е':'e','є':'ie','ж':'zh','з':'z','и':'y','і':'i','ї':'i','й':'i','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u','ф':'f','х':'kh','ц':'ts','ч':'ch','ш':'sh','щ':'shch','ь':'','ю':'iu','я':'ia','ё':'io' };
+const CREATED_STUDENTS_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'created-students.json');
+let createdStudentsStore = [];
+try {
+  if (existsSync(CREATED_STUDENTS_FILE)) {
+    createdStudentsStore = JSON.parse(readFileSync(CREATED_STUDENTS_FILE, 'utf8'));
+  }
+} catch (_) {}
+
+function transliterateUAtoEN(s) {
+  return (s || '').toLowerCase().split('').map(c => {
+    const lower = c.toLowerCase();
+    if (UA_TO_LATIN[lower]) return UA_TO_LATIN[lower];
+    if (/[a-z0-9]/.test(c)) return c;
+    return '';
+  }).join('');
+}
+
+function parseStudentName(fullName) {
+  const parts = (fullName || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return { familyName: parts[0], givenName: parts.slice(1).join(' ') };
+  if (parts.length === 1) return { familyName: parts[0], givenName: '' };
+  return { familyName: '', givenName: '' };
+}
+
+function generateStudentEmail(familyName, givenName, existingEmails = new Set()) {
+  const fn = transliterateUAtoEN((familyName || '').replace(/\s+/g, ' ').trim());
+  const gn = transliterateUAtoEN((givenName || '').replace(/\s+/g, ' ').trim());
+  const base = [fn, gn].filter(Boolean).join('_').replace(/[^a-z0-9_]/g, '') || 'user';
+  const domain = process.env.STUDENT_EMAIL_DOMAIN || 'kshg.site';
+  let email = `${base}@${domain}`;
+  let n = 1;
+  while (existingEmails.has(email.toLowerCase())) {
+    email = `${base}${n}@${domain}`;
+    n++;
+  }
+  return email;
+}
+
+function generateStudentPassword() {
+  return 'kshl' + String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function addCreatedStudent(className, familyName, givenName, email, password) {
+  createdStudentsStore.push({
+    createdAt: new Date().toISOString(),
+    className: className || '',
+    familyName: familyName || '',
+    givenName: givenName || '',
+    email: email || '',
+    password: password || ''
+  });
+  try {
+    writeFileSync(CREATED_STUDENTS_FILE, JSON.stringify(createdStudentsStore, null, 2), 'utf8');
+  } catch (_) {}
+}
 
 app.get('/api/auth/url', (req, res) => {
   try {
@@ -65,6 +121,17 @@ app.post('/api/classroom/course/add-student', async (req, res) => {
     const { tokens, courseId, email } = req.body || {};
     if (!tokens || !courseId || !email) return res.status(400).json({ error: 'Потрібні токени, courseId та email' });
     await addStudentToCourse(tokens, courseId, email);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/classroom/course/update', async (req, res) => {
+  try {
+    const { tokens, courseId, name, section } = req.body || {};
+    if (!tokens || !courseId) return res.status(400).json({ error: 'Потрібні токени та courseId' });
+    await updateCourse(tokens, courseId, name, section);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -234,6 +301,53 @@ app.post('/api/users/create', async (req, res) => {
   }
 });
 
+app.get('/api/created-students/dates', (req, res) => {
+  const dates = [...new Set(createdStudentsStore.map(s => s.createdAt.slice(0, 10)))].sort().reverse();
+  res.json({ dates });
+});
+
+app.get('/api/created-students', (req, res) => {
+  const { date } = req.query || {};
+  let items = createdStudentsStore;
+  if (date) items = items.filter(s => s.createdAt.slice(0, 10) === date);
+  const byClass = {};
+  for (const s of items) {
+    const k = s.className || '(без класу)';
+    if (!byClass[k]) byClass[k] = [];
+    byClass[k].push({ familyName: s.familyName, givenName: s.givenName, email: s.email, password: s.password });
+  }
+  res.json({ byClass, items });
+});
+
+app.post('/api/created-students/create-and-add', async (req, res) => {
+  try {
+    const { tokens, studentName, className, courseId } = req.body || {};
+    if (!tokens || !studentName || !courseId) return res.status(400).json({ error: 'Потрібні токени, studentName та courseId' });
+    let adminClasses = [];
+    try {
+      adminClasses = await getClassesFromAdmin(tokens, 'Учні');
+    } catch (_) {}
+    const adminClass = findAdminClassForJournal(adminClasses, className || '');
+    if (!adminClass?.orgUnitPath) return res.status(400).json({ error: 'Не знайдено клас у Google Admin для: ' + (className || '') });
+    const { familyName, givenName } = parseStudentName(studentName);
+    if (!familyName && !givenName) return res.status(400).json({ error: 'Невалідне ім\'я учня' });
+    let classStudents = [];
+    try {
+      classStudents = await getUsersFromOrgUnit(tokens, adminClass.orgUnitPath);
+    } catch (_) {}
+    const existingEmails = new Set((classStudents || []).map(u => (u.email || u.primaryEmail || '').toLowerCase()).filter(Boolean));
+    const pwd = generateStudentPassword();
+    const email = generateStudentEmail(familyName, givenName, existingEmails);
+    await createUserInOrgPath(tokens, { givenName, familyName, primaryEmail: email, password: pwd }, adminClass.orgUnitPath);
+    const normClassName = normalizeClassForMatch(className) || className;
+    addCreatedStudent(normClassName, familyName, givenName, email, pwd);
+    await addStudentToCourse(tokens, courseId, email);
+    res.json({ success: true, email, password: pwd, familyName, givenName });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/users/move', async (req, res) => {
   try {
     const { tokens, email, orgUnitPath } = req.body || {};
@@ -282,7 +396,11 @@ app.post('/api/teachers/map', (req, res) => {
 });
 
 function normalizeName(name) {
-  return name.replace(/\s+/g, ' ').trim().toLowerCase();
+  return (name || '').replace(/[\u0027\u2019\u02BC\u0060\u00B4\u2032]/g, "'").replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function normalizeNameForMatch(s) {
+  return (s || '').replace(/[\u0027\u2019\u02BC\u0060\u00B4\u2032]/g, "'").replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 app.post('/api/parse', async (req, res) => {
@@ -376,18 +494,38 @@ function findTeacherEmail(emailMap, nzName) {
 
 function normalizeClassForMatch(s) {
   if (!s || typeof s !== 'string') return '';
-  let t = s.split('(')[0].trim().replace(/\s+/g, ' ');
-  t = t.replace(/[\u2010-\u2015\u2212\-–—]/g, '-').trim();
-  return t.replace(/-/g, '');
+  let t = s.split('(')[0].trim().replace(/\s*клас\s*$/gi, '').trim();
+  t = t.replace(/\s+/g, ' ').replace(/[\u2010-\u2015\u2212\-–—]/g, '-').trim();
+  return t.replace(/-/g, '').replace(/\s+/g, '');
+}
+
+function findAdminClassForJournal(adminClasses, journalClassLabel) {
+  const baseNorm = normalizeClassForMatch(journalClassLabel);
+  if (!baseNorm) return null;
+  const exact = (adminClasses || []).find(c => normalizeClassForMatch(c.name) === baseNorm);
+  if (exact) return exact;
+  const prefix = (adminClasses || []).find(c => {
+    const adminNorm = normalizeClassForMatch(c.name);
+    return adminNorm && (adminNorm === baseNorm || adminNorm.startsWith(baseNorm) || baseNorm.startsWith(adminNorm));
+  });
+  return prefix || null;
 }
 
 function findStudentEmail(adminStudents, studentName) {
-  const key = normalizeName(studentName);
+  const parts = (studentName || '').trim().split(/\s+/).filter(Boolean);
+  const targetKey = normalizeNameForMatch(studentName);
+  const targetSwapped = parts.length >= 2 ? normalizeNameForMatch(parts.slice(1).concat(parts[0]).join(' ')) : targetKey;
+  const targetFirstTwo = parts.length >= 2 ? normalizeNameForMatch(parts.slice(0, 2).join(' ')) : targetKey;
+  const targetFirstTwoSwapped = parts.length >= 2 ? normalizeNameForMatch(parts[1] + ' ' + parts[0]) : targetKey;
   for (const u of adminStudents || []) {
-    const n = normalizeName([u.givenName, u.familyName].filter(Boolean).join(' '));
-    if (n === key) return u.email;
-    const n2 = normalizeName([u.familyName, u.givenName].filter(Boolean).join(' '));
-    if (n2 === key) return u.email;
+    const fn = (u.familyName || '').trim();
+    const gn = (u.givenName || '').trim();
+    const key1 = normalizeNameForMatch(`${fn} ${gn}`);
+    const key2 = normalizeNameForMatch(`${gn} ${fn}`);
+    if (key1 === targetKey || key2 === targetKey || key1 === targetSwapped || key2 === targetSwapped) return u.email;
+    if (key1 === targetFirstTwo || key2 === targetFirstTwo || key1 === targetFirstTwoSwapped || key2 === targetFirstTwoSwapped) return u.email;
+    if (targetKey.startsWith(key1 + ' ') || targetKey.startsWith(key2 + ' ')) return u.email;
+    if (targetSwapped.startsWith(key1 + ' ') || targetSwapped.startsWith(key2 + ' ')) return u.email;
   }
   return null;
 }
@@ -436,6 +574,12 @@ app.post('/api/sync/init', async (req, res) => {
   }
 });
 
+function findExistingCourse(existingCourses, section, name) {
+  const s = (section || '').trim();
+  const n = (name || '').trim();
+  return (existingCourses || []).find(c => (c.section || '').trim() === s && (c.name || '').trim() === n);
+}
+
 app.post('/api/sync/create-one', async (req, res) => {
   try {
     const { tokens, login, password, journal, emailMapArr, adminClasses, currentUserEmail } = req.body;
@@ -445,15 +589,16 @@ app.post('/api/sync/create-one', async (req, res) => {
     const nzCreds = { login, password };
     const courseName = `${journal.subject} - ${journal.classLabel}`;
     try {
-      const course = await createCourse(classroom, journal.classLabel, 'me', journal.subject);
+      const existingCourses = await listCourses(tokens);
+      let course = findExistingCourse(existingCourses, journal.subject, journal.classLabel);
+      if (!course) course = await createCourse(classroom, journal.classLabel, 'me', journal.subject);
       const cacheKey = `${journal.journalId}-${journal.subgroupId || ''}`;
       const journalUrl = `https://nz.ua/journal/index?journal=${journal.journalId}${journal.subgroupId ? `&subgroup=${journal.subgroupId}` : ''}`;
       const journalHtml = await fetchWithPuppeteer(journalUrl, nzCreds);
       const { teacher, students } = parseJournalDetails(journalHtml);
       const teacherEmail = teacher ? findTeacherEmail(emailMap, teacher.name) : null;
       const teachersAdded = new Set();
-      if (currentUserEmail) {
-        await addTeacher(classroom, course.id, currentUserEmail);
+      if (currentUserEmail && teacherEmail && teacherEmail.toLowerCase() === currentUserEmail.toLowerCase()) {
         teachersAdded.add(currentUserEmail);
       }
       if (teacherEmail && !teachersAdded.has(teacherEmail)) {
@@ -461,16 +606,30 @@ app.post('/api/sync/create-one', async (req, res) => {
         teachersAdded.add(teacherEmail);
       }
       let studentsAdded = 0;
-      const normClass = normalizeClassForMatch(journal.classLabel);
-      const adminClass = (adminClasses || []).find(c => normalizeClassForMatch(c.name) === normClass);
+      const adminClass = findAdminClassForJournal(adminClasses, journal.classLabel);
       let classStudents = [];
       if (adminClass?.orgUnitPath) {
         try {
           classStudents = await getUsersFromOrgUnit(tokens, adminClass.orgUnitPath);
         } catch (_) {}
       }
+      const existingEmails = new Set((classStudents || []).map(u => (u.email || u.primaryEmail || '').toLowerCase()).filter(Boolean));
+      const className = normalizeClassForMatch(journal.classLabel) || journal.classLabel;
       for (const st of (students || [])) {
-        const email = findStudentEmail(classStudents, st.name);
+        let email = findStudentEmail(classStudents, st.name);
+        if (!email && adminClass?.orgUnitPath) {
+          const { familyName, givenName } = parseStudentName(st.name);
+          if (familyName || givenName) {
+            try {
+              const pwd = generateStudentPassword();
+              email = generateStudentEmail(familyName, givenName, existingEmails);
+              await createUserInOrgPath(tokens, { givenName, familyName, primaryEmail: email, password: pwd }, adminClass.orgUnitPath);
+              existingEmails.add(email.toLowerCase());
+              classStudents.push({ familyName, givenName, email, primaryEmail: email });
+              addCreatedStudent(className, familyName, givenName, email, pwd);
+            } catch (createErr) {}
+          }
+        }
         if (email) {
           try {
             await addStudentToCourse(tokens, course.id, email);
@@ -535,11 +694,16 @@ app.post('/api/sync', async (req, res) => {
     }
 
     const journalCache = new Map();
+    let existingCourses = await listCourses(tokens);
     for (let i = 0; i < allJournals.length; i++) {
       const j = allJournals[i];
       const courseName = `${j.subject} - ${j.classLabel}`;
       try {
-        const course = await createCourse(classroom, j.classLabel, 'me', j.subject);
+        let course = findExistingCourse(existingCourses, j.subject, j.classLabel);
+        if (!course) {
+          course = await createCourse(classroom, j.classLabel, 'me', j.subject);
+          existingCourses = existingCourses.concat([{ id: course.id, name: course.name || j.classLabel, section: course.section || j.subject }]);
+        }
         const cacheKey = `${j.journalId}-${j.subgroupId || ''}`;
         let teacherEmail = null;
         let students = [];
@@ -556,8 +720,7 @@ app.post('/api/sync', async (req, res) => {
           students = cached.students || [];
         }
         const teachersAdded = new Set();
-        if (currentUserEmail) {
-          await addTeacher(classroom, course.id, currentUserEmail);
+        if (teacherEmail && currentUserEmail && teacherEmail.toLowerCase() === currentUserEmail.toLowerCase()) {
           teachersAdded.add(currentUserEmail);
         }
         if (teacherEmail && !teachersAdded.has(teacherEmail)) {
@@ -565,8 +728,7 @@ app.post('/api/sync', async (req, res) => {
           teachersAdded.add(teacherEmail);
         }
         let studentsAdded = 0;
-        const normClass = normalizeClassForMatch(j.classLabel);
-        const adminClass = adminClasses.find(c => normalizeClassForMatch(c.name) === normClass);
+        const adminClass = findAdminClassForJournal(adminClasses, j.classLabel);
         let classStudents = [];
         if (adminClass?.orgUnitPath) {
           if (!classStudentsCache.has(adminClass.orgUnitPath)) {
@@ -578,8 +740,24 @@ app.post('/api/sync', async (req, res) => {
             classStudents = classStudentsCache.get(adminClass.orgUnitPath) || [];
           }
         }
+        const existingEmails = new Set((classStudents || []).map(u => (u.email || u.primaryEmail || '').toLowerCase()).filter(Boolean));
+        const className = normalizeClassForMatch(j.classLabel) || j.classLabel;
         for (const st of students) {
-          const email = findStudentEmail(classStudents, st.name);
+          let email = findStudentEmail(classStudents, st.name);
+          if (!email && adminClass?.orgUnitPath) {
+            const { familyName, givenName } = parseStudentName(st.name);
+            if (familyName || givenName) {
+              try {
+                const pwd = generateStudentPassword();
+                email = generateStudentEmail(familyName, givenName, existingEmails);
+                await createUserInOrgPath(tokens, { givenName, familyName, primaryEmail: email, password: pwd }, adminClass.orgUnitPath);
+                existingEmails.add(email.toLowerCase());
+                classStudents.push({ familyName, givenName, email, primaryEmail: email });
+                classStudentsCache.set(adminClass.orgUnitPath, classStudents);
+                addCreatedStudent(className, familyName, givenName, email, pwd);
+              } catch (createErr) {}
+            }
+          }
           if (email) {
             try {
               await addStudentToCourse(tokens, course.id, email);

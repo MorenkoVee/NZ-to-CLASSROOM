@@ -135,6 +135,7 @@
     .course-detail-row .class-students-table tr { height: auto !important; max-height: none !important; }
     .course-check-cell { width: 2.5rem; padding: 0.4rem !important; vertical-align: middle; }
     .course-check-cell input { cursor: pointer; }
+    .course-edit-cell { width: 3rem; padding: 0.4rem !important; vertical-align: middle; text-align: center; }
     .course-roster-table th:first-child,
     .course-roster-table td:first-child { width: 2.5rem; }
     .course-roster-table th:nth-child(2),
@@ -291,6 +292,13 @@
               <span>Журнали: <strong id="statStudentsJournals">0</strong></span>
             </div>
           </div>
+          <div class="stat-card stat-card-split">
+            <div class="label">Журналів / Курсів</div>
+            <div class="stat-split">
+              <span>Журналів: <strong id="statJournals">0</strong></span>
+              <span>Курсів Classroom: <strong id="statCourses">0</strong></span>
+            </div>
+          </div>
         </div>
         <div id="preloadStatusDashboard" class="status" style="display:none; margin-bottom: 1rem;"></div>
         <div id="preloadClassesStatusDashboard" class="status" style="display:none; margin-bottom: 1rem;"></div>
@@ -383,6 +391,15 @@
           </div>
           <div id="syncStatus" class="status" style="display:none;"></div>
           <div id="syncLog" class="log" style="margin-top: 1rem; display:none;"></div>
+          <div class="form-row" style="margin-top: 1.5rem; align-items: flex-end;">
+            <div class="modal-row" style="margin-bottom: 0;">
+              <label for="createdStudentsDate">Створені учні — дата генерації</label>
+              <select id="createdStudentsDate" class="input-field" style="min-width: 180px;">
+                <option value="">— оберіть дату —</option>
+              </select>
+            </div>
+            <button class="btn-secondary" id="btnDownloadCreatedStudents">Завантажити таблицю</button>
+          </div>
         </div>
       </div>
     </div>
@@ -465,6 +482,24 @@
       <div id="modalSelectStudentContent"></div>
       <div class="modal-actions" id="modalSelectStudentActions">
         <button class="btn-secondary" id="btnModalSelectStudentSkip">Пропустити</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modalEditCourse" class="modal-overlay" style="display:none;">
+    <div class="modal modal-alert">
+      <div class="modal-title">Редагувати курс</div>
+      <div class="modal-row">
+        <label for="modalEditCourseSection">Секція</label>
+        <input type="text" id="modalEditCourseSection" class="input-field" placeholder="Наприклад: Математика">
+      </div>
+      <div class="modal-row">
+        <label for="modalEditCourseName">Курс</label>
+        <input type="text" id="modalEditCourseName" class="input-field" placeholder="Наприклад: 5-А">
+      </div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="btnModalEditCourseCancel">Скасувати</button>
+        <button class="btn-primary" id="btnModalEditCourseSubmit">Зберегти</button>
       </div>
     </div>
   </div>
