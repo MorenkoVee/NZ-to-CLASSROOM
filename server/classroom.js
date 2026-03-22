@@ -71,6 +71,29 @@ async function getOrgUnitChildrenRecursive(admin, customerId, parentPath, classe
   } catch (_) {}
 }
 
+export async function updateOrgUnit(tokens, orgUnitPath, newName) {
+  const auth = getOAuth2Client(tokens);
+  const admin = google.admin({ version: 'directory_v1', auth });
+  const pathForApi = orgUnitPath.replace(/^\//, '');
+  await admin.orgunits.update({
+    customerId: 'my_customer',
+    orgUnitPath: pathForApi,
+    requestBody: { name: newName }
+  });
+  return { success: true };
+}
+
+export async function deleteOrgUnit(tokens, orgUnitPath) {
+  const auth = getOAuth2Client(tokens);
+  const admin = google.admin({ version: 'directory_v1', auth });
+  const pathForApi = orgUnitPath.replace(/^\//, '');
+  await admin.orgunits.delete({
+    customerId: 'my_customer',
+    orgUnitPath: pathForApi
+  });
+  return { success: true };
+}
+
 export async function getClassesFromAdmin(tokens, parentOuName = 'Учні') {
   const auth = getOAuth2Client(tokens);
   const admin = google.admin({ version: 'directory_v1', auth });
@@ -412,7 +435,7 @@ export function getAuthUrl() {
       'https://www.googleapis.com/auth/classroom.rosters',
       'https://www.googleapis.com/auth/classroom.profile.emails',
       'https://www.googleapis.com/auth/admin.directory.user',
-      'https://www.googleapis.com/auth/admin.directory.orgunit.readonly',
+      'https://www.googleapis.com/auth/admin.directory.orgunit',
       'https://www.googleapis.com/auth/userinfo.email',
       'https://www.googleapis.com/auth/userinfo.profile'
     ],

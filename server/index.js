@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import cors from 'cors';
 import { fetchWithPuppeteer } from './fetcher.js';
 import { parseJournalList, parseJournalPage, parseJournalDetails } from './parser.js';
-import { getClassroomClient, createCourse, addTeacher, addStudentToCourse, removeStudentFromCourse, removeTeacherFromCourse, archiveCourse, updateCourse, getAuthUrl, getTokensFromCode, getTeachersFromAdmin, getClassesFromAdmin, getUsersFromOrgUnit, getUserInfo, moveUserToOrgUnit, createUserInOrgUnit, searchUsersInDomain, createUserInOrgPath, moveUserToOrgPath, updateUser, listCourses, getCourseTeachers, getCourseStudents } from './classroom.js';
+import { getClassroomClient, createCourse, addTeacher, addStudentToCourse, removeStudentFromCourse, removeTeacherFromCourse, archiveCourse, updateCourse, getAuthUrl, getTokensFromCode, getTeachersFromAdmin, getClassesFromAdmin, getUsersFromOrgUnit, getUserInfo, moveUserToOrgUnit, createUserInOrgUnit, searchUsersInDomain, createUserInOrgPath, moveUserToOrgPath, updateUser, listCourses, getCourseTeachers, getCourseStudents, updateOrgUnit, deleteOrgUnit } from './classroom.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -237,6 +237,94 @@ app.post('/api/classes/admin/students', async (req, res) => {
     if (!tokens || !orgUnitPath) return res.status(400).json({ error: 'Потрібні токени та orgUnitPath' });
     const students = await getUsersFromOrgUnit(tokens, orgUnitPath);
     res.json({ students });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function parseClassForPromotion(name) {
+  const n = (name || '').trim();
+  const m = n.match(/^(\d+)[-\s]*(.*)$/);
+  if (m) return { grade: parseInt(m[1], 10), letter: (m[2] || '').trim() };
+  return { grade: 0, letter: n };
+}
+
+function getPromotedClassName(name) {
+  const { grade, letter } = parseClassForPromotion(name);
+  if (grade >= 11) return null;
+  const newGrade = grade + 1;
+  return letter ? `${newGrade}-${letter}` : String(newGrade);
+}
+
+app.post('/api/classes/admin/rename', async (req, res) => {
+  try {
+    const { tokens, orgUnitPath, newName } = req.body || {};
+    if (!tokens || !orgUnitPath || !newName) return res.status(400).json({ error: 'Потрібні токени, orgUnitPath та newName' });
+    await updateOrgUnit(tokens, orgUnitPath, (newName || '').trim());
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/classes/admin/delete', async (req, res) => {
+  try {
+    const { tokens, orgUnitPath } = req.body || {};
+    if (!tokens || !orgUnitPath) return res.status(400).json({ error: 'Потрібні токени та orgUnitPath' });
+    const users = await getUsersFromOrgUnit(tokens, orgUnitPath);
+    for (const u of users || []) {
+      const email = u.email || u.primaryEmail;
+      if (email) await moveUserToOrgUnit(tokens, email, 'Випускники');
+    }
+    await deleteOrgUnit(tokens, orgUnitPath);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/classes/admin/promote', async (req, res) => {
+  try {
+    const { tokens } = req.body || {};
+    if (!tokens) return res.status(400).json({ error: 'Потрібні токени' });
+    const classes = await getClassesFromAdmin(tokens, 'Учні');
+    const grade11 = classes.filter(c => parseClassForPromotion(c.name).grade === 11);
+    const others = classes.filter(c => {
+      const g = parseClassForPromotion(c.name).grade;
+      return g >= 1 && g <= 10;
+    });
+    const results = [];
+    for (const c of grade11) {
+      try {
+        const users = await getUsersFromOrgUnit(tokens, c.orgUnitPath);
+        for (const u of users || []) {
+          const email = u.email || u.primaryEmail;
+          if (email) {
+            await moveUserToOrgUnit(tokens, email, 'Випускники');
+          }
+        }
+        await deleteOrgUnit(tokens, c.orgUnitPath);
+        results.push({ action: 'graduate', name: c.name, success: true });
+      } catch (err) {
+        results.push({ action: 'graduate', name: c.name, success: false, error: err.message });
+      }
+    }
+    const sorted = others.sort((a, b) => {
+      const ga = parseClassForPromotion(a.name).grade;
+      const gb = parseClassForPromotion(b.name).grade;
+      return gb - ga;
+    });
+    for (const c of sorted) {
+      const newName = getPromotedClassName(c.name);
+      if (!newName) continue;
+      try {
+        await updateOrgUnit(tokens, c.orgUnitPath, newName);
+        results.push({ action: 'rename', oldName: c.name, newName, success: true });
+      } catch (err) {
+        results.push({ action: 'rename', oldName: c.name, newName, success: false, error: err.message });
+      }
+    }
+    res.json({ results });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -285,6 +285,48 @@ async function loadCreatedStudentsDates() {
   } catch (_) {}
 }
 
+document.getElementById('btnPromoteClasses').onclick = async () => {
+  if (!loadTokens()) {
+    showAlertModal('Спочатку увійдіть через Google', 'Увага');
+    return;
+  }
+  const msg = 'Ця дія:\n\n• 11-й клас: учнів перемістить у «Випускники», оргпідрозділ класу видалить\n• 1–10 класи: перейменує (10-А→11-А, 8→9 тощо)\n\nЦе незворотна зміна в Google Admin. Підтвердіть виконання.';
+  if (!(await showConfirmModal(msg, 'Перевести класи на наступний навчальний рік', true))) return;
+  const btn = document.getElementById('btnPromoteClasses');
+  btn.disabled = true;
+  btn.textContent = 'Виконання...';
+  try {
+    const r = await fetch(`${API}/classes/admin/promote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tokens })
+    });
+    const data = await r.json().catch(() => ({}));
+    if (data.error) throw new Error(data.error);
+    const results = data.results || [];
+    const okCount = results.filter(x => x.success).length;
+    const errCount = results.filter(x => !x.success).length;
+    adminClasses = [];
+    localStorage.removeItem(CACHE_KEYS.classStudents);
+    Object.keys(classStudentsLoading).forEach(k => delete classStudentsLoading[k]);
+    if (loadTokens()) {
+      loadClasses().then(() => { saveToCache(); updateStats(); preloadClassStudents(); });
+      loadAdminStats().then(() => saveToCache());
+    }
+    if (errCount) {
+      const errs = results.filter(x => !x.success).map(x => (x.oldName || x.name) + ': ' + (x.error || '')).join('\n');
+      showAlertModal(`Виконано: ${okCount}. Помилки (${errCount}):\n${errs}`, 'Результат', true);
+    } else {
+      showAlertModal(`Переведено класи: ${okCount} операцій.`);
+    }
+  } catch (e) {
+    showAlertModal('Помилка: ' + (e.message || e.name), 'Помилка', true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Перевести класи на наступний навчальний рік';
+  }
+};
+
 document.getElementById('btnDownloadCreatedStudents').onclick = async () => {
   const sel = document.getElementById('createdStudentsDate');
   if (!sel?.value) {
@@ -1633,13 +1675,84 @@ function renderClassesTable() {
   if (!listEl || !adminClasses.length) return;
   listEl.style.display = 'block';
   const sorted = sortClassesByGrade(adminClasses);
-  listEl.innerHTML = '<table><thead><tr><th>Клас</th></tr></thead><tbody>' +
+  listEl.innerHTML = '<table><thead><tr><th>Клас</th><th style="width:5rem;"></th></tr></thead><tbody>' +
     sorted.map((c, i) => {
       const displayName = normalizeClassLabel(c.name || '') || c.name || '';
-      return `<tr class="class-row" data-path="${escapeHtml(c.orgUnitPath || '')}" data-name="${escapeHtml(displayName)}" data-idx="${i}"><td>${escapeHtml(displayName)}</td></tr>`;
+      const path = escapeHtml(c.orgUnitPath || '');
+      const name = escapeHtml(displayName);
+      const realName = escapeHtml(c.name || '');
+      return `<tr class="class-row" data-path="${path}" data-name="${name}" data-real-name="${realName}" data-idx="${i}"><td>${name}</td><td class="class-actions-cell"><button type="button" class="btn-edit-class btn-secondary btn-sm" data-path="${path}" data-name="${name}" data-real-name="${realName}" title="Редагувати">✎</button><button type="button" class="btn-delete-class btn-secondary btn-sm" data-path="${path}" data-name="${name}" data-real-name="${realName}" title="Видалити">✕</button></td></tr>`;
     }).join('') +
     '</tbody></table>';
-  listEl.querySelectorAll('.class-row').forEach(row => row.onclick = () => toggleClassStudents(row));
+  listEl.querySelectorAll('.class-row').forEach(row => {
+    row.onclick = (e) => { if (!e.target.closest('.class-actions-cell')) toggleClassStudents(row); };
+  });
+  listEl.querySelectorAll('.btn-edit-class').forEach(btn => {
+    btn.onclick = (e) => { e.stopPropagation(); openEditClassModal(btn.dataset.path, btn.dataset.realName || btn.dataset.name); };
+  });
+  listEl.querySelectorAll('.btn-delete-class').forEach(btn => {
+    btn.onclick = (e) => { e.stopPropagation(); deleteClassWithConfirm(btn.dataset.path, btn.dataset.realName || btn.dataset.name); };
+  });
+}
+
+function openEditClassModal(orgUnitPath, currentName) {
+  const modal = document.getElementById('modalEditClass');
+  const input = document.getElementById('modalEditClassName');
+  if (!modal || !input) return;
+  input.value = currentName || '';
+  modal.style.display = 'flex';
+  const close = () => { modal.style.display = 'none'; modal.onclick = null; document.getElementById('btnModalEditClassCancel').onclick = null; document.getElementById('btnModalEditClassSubmit').onclick = null; };
+  modal.onclick = (e) => { if (e.target === modal) close(); };
+  document.getElementById('btnModalEditClassCancel').onclick = () => close();
+  document.getElementById('btnModalEditClassSubmit').onclick = async () => {
+    const newName = (input.value || '').trim();
+    if (!newName) { showAlertModal('Введіть назву класу', 'Увага'); return; }
+    if (!loadTokens()) { showAlertModal('Спочатку увійдіть через Google', 'Увага'); return; }
+    try {
+      const r = await fetch(`${API}/classes/admin/rename`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tokens, orgUnitPath, newName })
+      });
+      const data = await r.json().catch(() => ({}));
+      if (data.error) throw new Error(data.error);
+      close();
+      adminClasses = adminClasses.map(c => c.orgUnitPath === orgUnitPath ? { ...c, name: newName } : c);
+      localStorage.removeItem(CACHE_KEYS.classStudents);
+      Object.keys(classStudentsLoading).forEach(k => delete classStudentsLoading[k]);
+      renderClassesTable();
+      saveToCache();
+      showAlertModal(`Клас перейменовано на «${newName}»`);
+    } catch (e) {
+      showAlertModal('Помилка: ' + (e.message || e.name), 'Помилка', true);
+    }
+  };
+}
+
+async function deleteClassWithConfirm(orgUnitPath, className) {
+  if (!loadTokens()) { showAlertModal('Спочатку увійдіть через Google', 'Увага'); return; }
+  const msg = `Видалити клас «${className}»?\n\nУсі учні будуть переміщені в підрозділ «Випускники», організаційний підрозділ класу буде видалено. Ця дія незворотна.`;
+  if (!(await showConfirmModal(msg, 'Видалити клас', true))) return;
+  try {
+    const r = await fetch(`${API}/classes/admin/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tokens, orgUnitPath })
+    });
+    const data = await r.json().catch(() => ({}));
+    if (data.error) throw new Error(data.error);
+    adminClasses = adminClasses.filter(c => c.orgUnitPath !== orgUnitPath);
+    adminClassesCount = adminClasses.length;
+    localStorage.removeItem(CACHE_KEYS.classStudents);
+    Object.keys(classStudentsLoading).forEach(k => delete classStudentsLoading[k]);
+    renderClassesTable();
+    saveToCache();
+    updateStats();
+    if (loadTokens()) loadAdminStats().then(() => saveToCache());
+    showAlertModal(`Клас «${className}» видалено`);
+  } catch (e) {
+    showAlertModal('Помилка: ' + (e.message || e.name), 'Помилка', true);
+  }
 }
 
 function sortCoursesBySection(courses) {

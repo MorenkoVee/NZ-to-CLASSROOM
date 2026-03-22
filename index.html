@@ -136,6 +136,9 @@
     .course-check-cell { width: 2.5rem; padding: 0.4rem !important; vertical-align: middle; }
     .course-check-cell input { cursor: pointer; }
     .course-edit-cell { width: 3rem; padding: 0.4rem !important; vertical-align: middle; text-align: center; }
+    .class-actions-cell { width: 5rem; padding: 0.4rem !important; vertical-align: middle; white-space: nowrap; }
+    .class-actions-cell button { margin-left: 0.2rem; }
+    .class-actions-cell button:first-child { margin-left: 0; }
     .course-roster-table th:first-child,
     .course-roster-table td:first-child { width: 2.5rem; }
     .course-roster-table th:nth-child(2),
@@ -187,8 +190,8 @@
     .btn-cell { vertical-align: middle; }
     .btn-cell-inner { display: flex; flex-direction: row; gap: 0.25rem; align-items: center; flex-wrap: nowrap; justify-content: flex-start; }
     .btn-remove-teacher, .btn-find-student, .btn-move-to-graduates, .btn-move-to-class, .btn-edit-user, .btn-swap-names, .btn-remove-from-course, .btn-remove-teacher-from-course { width: 28px; height: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 1rem; line-height: 1; min-width: 28px; border-radius: 4px; }
-    .btn-remove-from-course, .btn-remove-teacher-from-course, .btn-remove-teacher, .btn-move-to-graduates { color: var(--error); border-color: var(--error); }
-    .btn-remove-from-course:hover, .btn-remove-teacher-from-course:hover, .btn-remove-teacher:hover, .btn-move-to-graduates:hover { background: rgba(220,38,38,0.1); border-color: var(--error); }
+    .btn-remove-from-course, .btn-remove-teacher-from-course, .btn-remove-teacher, .btn-move-to-graduates, .btn-delete-class { color: var(--error); border-color: var(--error); }
+    .btn-remove-from-course:hover, .btn-remove-teacher-from-course:hover, .btn-remove-teacher:hover, .btn-move-to-graduates:hover, .btn-delete-class:hover { background: rgba(220,38,38,0.1); border-color: var(--error); }
     .btn-move-student { width: auto; padding: 0.35rem 0.6rem; font-size: 0.85rem; line-height: 1; min-width: auto; background: var(--success); color: white; border: none; border-radius: 4px; }
     .btn-move-student:hover { background: #047857; }
     #modalFindStudentContent { overflow-x: auto; max-width: 100%; }
@@ -400,6 +403,9 @@
             </div>
             <button class="btn-secondary" id="btnDownloadCreatedStudents">Завантажити таблицю</button>
           </div>
+          <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border);">
+            <button class="btn-secondary" id="btnPromoteClasses" style="border-color: var(--error); color: var(--error);">Перевести класи на наступний навчальний рік</button>
+          </div>
         </div>
       </div>
     </div>
@@ -482,6 +488,20 @@
       <div id="modalSelectStudentContent"></div>
       <div class="modal-actions" id="modalSelectStudentActions">
         <button class="btn-secondary" id="btnModalSelectStudentSkip">Пропустити</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modalEditClass" class="modal-overlay" style="display:none;">
+    <div class="modal modal-alert">
+      <div class="modal-title">Редагувати клас</div>
+      <div class="modal-row">
+        <label for="modalEditClassName">Назва класу</label>
+        <input type="text" id="modalEditClassName" class="input-field" placeholder="Наприклад: 10-А">
+      </div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="btnModalEditClassCancel">Скасувати</button>
+        <button class="btn-primary" id="btnModalEditClassSubmit">Зберегти</button>
       </div>
     </div>
   </div>
